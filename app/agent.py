@@ -1,17 +1,3 @@
-# Copyright 2025 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 # mypy: disable-error-code="union-attr"
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableConfig
@@ -23,51 +9,92 @@ from langgraph.prebuilt import ToolNode
 LOCATION = "us-central1"
 LLM = "gemini-2.0-flash-001"
 
-
-# 1. Define tools
+# 1. Define tools (connectors)
 @tool
-def search(query: str) -> str:
-    """Simulates a web search. Use it get information on weather"""
-    if "sf" in query.lower() or "san francisco" in query.lower():
-        return "It's 60 degrees and foggy."
-    return "It's 90 degrees and sunny."
+def kinaxis_connector(query: str) -> str:
+    """Simulates interacting with Kinaxis"""
+    return f"Kinaxis data for: {query}"
 
+# @tool
+# def sap_connector(query: str) -> str:
+#     """Simulates interacting with SAP"""
+#     return f"SAP data for: {query}"
 
-tools = [search]
+# @tool
+# def salesforce_connector(query: str) -> str:
+#     """Simulates interacting with Salesforce"""
+#     return f"Salesforce data for: {query}"
+
+# tools = [kinaxis_connector, sap_connector, salesforce_connector]
+
+# invoice_tools = [sap_connector]
+# due_diligence_tools = [kinaxis_connector]
+# finance_tools = [salesforce_connector]
+
+# procesing_tools = [invoice_tools, due_diligence_tools, finance_tools]
+procesing_tools = [kinaxis_connector]
+
 
 # 2. Set up the language model
 llm = ChatVertexAI(
     model=LLM, location=LOCATION, temperature=0, max_tokens=1024, streaming=True
-).bind_tools(tools)
-
+).bind_tools(procesing_tools) 
 
 # 3. Define workflow components
-def should_continue(state: MessagesState) -> str:
-    """Determines whether to use tools or end the conversation."""
-    last_message = state["messages"][-1]
-    return "tools" if last_message.tool_calls else END
-
-
-def call_model(state: MessagesState, config: RunnableConfig) -> dict[str, BaseMessage]:
-    """Calls the language model and returns the response."""
-    system_message = "You are a helpful AI assistant."
-    messages_with_system = [{"type": "system", "content": system_message}] + state[
-        "messages"
-    ]
-    # Forward the RunnableConfig object to ensure the agent is capable of streaming the response.
+def invoice_agent(state: MessagesState, config: RunnableConfig) -> dict[str, BaseMessage]:
+    """Simulates the invoice agent."""
+    system_message = "You are the invoice agent. Extract invoice data and decide where to send it."
+    messages_with_system = [{"type": "system", "content": system_message}] + state["messages"]
     response = llm.invoke(messages_with_system, config)
     return {"messages": response}
 
+# def due_diligence_agent(state: MessagesState, config: RunnableConfig) -> dict[str, BaseMessage]:
+#     """Simulates the due diligence agent."""
+#     system_message = "You are the due diligence agent. Check contracts and OTIF."
+#     messages_with_system = [{"type": "system", "content": system_message}] + state["messages"]
+#     response = llm.invoke(messages_with_system, config)
+#     return {"messages": response}
+
+def finance_agent(state: MessagesState, config: RunnableConfig) -> dict[str, BaseMessage]:
+    """Simulates the finance agent."""
+    system_message = "You are the finance agent. Identify optimization opportunities."
+    messages_with_system = [{"type": "system", "content": system_message}] + state["messages"]
+    response = llm.invoke(messages_with_system, config)
+    return {"messages": response}
+
+def should_continue(state: MessagesState) -> str:
+    """Determines whether to use tools or end the conversation."""
+    last_message = state["messages"][-1]
+    return "tools" if last_message.tool_calls else "due_diligence_agent"
+
+# def should_continue_finance(state: MessagesState) -> str:
+#     """Determines whether to use tools or end the conversation."""
+#     last_message = state["messages"][-1]
+#     return "tools" if last_message.tool_calls else END
+
+# def should_continue_due_diligence(state: MessagesState) -> str:
+#     """Determines whether to use tools or end the conversation."""
+#     last_message = state["messages"][-1]
+#     return "tools" if last_message.tool_calls else END
 
 # 4. Create the workflow graph
 workflow = StateGraph(MessagesState)
-workflow.add_node("agent", call_model)
-workflow.add_node("tools", ToolNode(tools))
-workflow.set_entry_point("agent")
+workflow.add_node("invoice_agent", invoice_agent)
+# workflow.add_node("due_diligence_agent", due_diligence_agent)
+workflow.add_node("finance_agent", finance_agent)
+workflow.add_node("tools", ToolNode(procesing_tools)) 
+
+workflow.set_entry_point("invoice_agent")
 
 # 5. Define graph edges
-workflow.add_conditional_edges("agent", should_continue)
-workflow.add_edge("tools", "agent")
+workflow.add_conditional_edges("invoice_agent", should_continue)
+workflow.add_conditional_edges("finance_agent", should_continue)
+# workflow.add_conditional_edges("due_diligence_agent", should_continue_due_diligence)
+
+workflow.add_edge("tools", "invoice_agent")
+# workflow.add_edge("invoice_agent","due_diligence_agent")
+# workflow.add_edge("due_diligence_agent","finance_agent")
+workflow.add_edge("finance_agent","invoice_agent")
 
 # 6. Compile the workflow
 agent = workflow.compile()
